@@ -13,10 +13,30 @@ sys_fork(void)
 }
 
 int
+sys_clone(void)
+{
+  char *fcn;
+  char *arg;
+  char *stack;
+
+  if (argptr(0, &fcn, sizeof(fcn)) < 0 || argptr(1, &arg, sizeof(arg)) < 0 || argptr(2, &stack, sizeof(stack)) < 0)
+    return -1;
+  return clone((void(*)(void*))fcn, (void*)arg, (void*)stack);
+}
+
+int
 sys_exit(void)
 {
   exit();
   return 0;  // not reached
+}
+
+int
+sys_join(void) {
+  char *stack;
+  if (argptr(0, &stack, sizeof(stack)) < 0)
+    return -1;
+  return join((void**)stack);
 }
 
 int

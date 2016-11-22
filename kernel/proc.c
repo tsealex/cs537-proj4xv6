@@ -144,6 +144,7 @@ fork(void)
   np->sz = proc->sz;
   np->parent = proc;
   *np->tf = *proc->tf;
+  np->stack = (void*)0;
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -154,13 +155,52 @@ fork(void)
   np->cwd = idup(proc->cwd);
  
   pid = np->pid;
+  np->space_id = np->pid;
+  np->state = RUNNABLE;
+  safestrcpy(np->name, proc->name, sizeof(proc->name));
+  return pid;
+}
+
+// Clone the calling process
+int
+clone(void(*fcn)(void*), void *arg, void*stack)
+{
+  int i, pid;
+  struct proc *np;
+
+  // Allocate process.
+  if ((np = allocproc()) == 0)
+    return -1;
+
+  // Copy process state from calling process.
+  np->pgdir = proc->pgdir;
+  
+  np->sz = proc->sz;
+  np->parent = proc;
+  *np->tf = *proc->tf;
+
+  // set up %eip and %ebp
+  np->stack = stack;
+  np->tf->eip = (uint)fcn; // set instruction pointer to target function
+  np->tf->ebp = (uint)stack + PGSIZE; // set base pointer to bottom of new stack
+
+  // initialize stack contents
+  uint temp[] = { 0xffffffff, (uint)arg };
+  copyout(np->pgdir, (uint)stack + PGSIZE - sizeof(uint) * 2, temp, sizeof(uint) * 2);
+  np->tf->esp = (uint)stack + PGSIZE - sizeof(uint) * 2;
+
+  *np->ofile = *proc->ofile;
+  np->cwd = idup(proc->cwd);
+
+  pid = np->pid;
+  np->space_id = proc->pid;
   np->state = RUNNABLE;
   safestrcpy(np->name, proc->name, sizeof(proc->name));
   return pid;
 }
 
 // Exit the current process.  Does not return.
-// An exited process remains in the zombie state
+// An exited process reins in the zombie state
 // until its parent calls wait() to find out it exited.
 void
 exit(void)
@@ -171,18 +211,28 @@ exit(void)
   if(proc == initproc)
     panic("init exiting");
 
-  // Close all open files.
-  for(fd = 0; fd < NOFILE; fd++){
-    if(proc->ofile[fd]){
-      fileclose(proc->ofile[fd]);
-      proc->ofile[fd] = 0;
+  acquire(&ptable.lock);
+  // Check if this is the last thread
+  // if so close all open files
+  // if not set p->space_id to 0
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p == proc || p == initproc || p->space_id != proc->space_id)
+      continue;
+    // not the last thread
+    proc->space_id = 0; // tell wait() not to clear the address space
+    break;
+  }
+  // Close all open files (last thread).
+  if (proc->space_id == 0) {
+    for (fd = 0; fd < NOFILE; fd++) {
+      if (proc->ofile[fd]) {
+        fileclose(proc->ofile[fd]);
+        proc->ofile[fd] = 0;
+      }
     }
   }
-
   iput(proc->cwd);
   proc->cwd = 0;
-
-  acquire(&ptable.lock);
 
   // Parent might be sleeping in wait().
   wakeup1(proc->parent);
@@ -217,25 +267,75 @@ wait(void)
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->parent != proc)
         continue;
-      havekids = 1;
-      if(p->state == ZOMBIE){
-        // Found one.
-        pid = p->pid;
-        kfree(p->kstack);
-        p->kstack = 0;
-        freevm(p->pgdir);
-        p->state = UNUSED;
-        p->pid = 0;
-        p->parent = 0;
-        p->name[0] = 0;
-        p->killed = 0;
-        release(&ptable.lock);
-        return pid;
+      // if it is either a child process or an abandoned thread
+      if ((uint)p->stack == 0 || proc == initproc) {
+        havekids = 1; 
+        if (p->state == ZOMBIE) {
+          // Found one.
+          pid = p->pid;
+          kfree(p->kstack);
+          p->kstack = 0;
+          // only clear the page table when this is the last thread of a process
+          if (p->space_id != 0)
+            freevm(p->pgdir);
+          p->state = UNUSED;
+          p->pid = 0;
+          p->space_id = 0;
+          p->parent = 0;
+          p->name[0] = 0;
+          p->killed = 0;
+          release(&ptable.lock);
+          return pid;
+        }
       }
     }
 
     // No point waiting if we don't have any children.
     if(!havekids || proc->killed){
+      release(&ptable.lock);
+      return -1;
+    }
+
+    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+    sleep(proc, &ptable.lock);  //DOC: wait-sleep
+  }
+}
+
+int
+join(void **stack)
+{ 
+  struct proc *p;
+  int havekids, pid;
+
+  acquire(&ptable.lock);
+  for (;;) {
+    // Scan through table looking for zombie children.
+    havekids = 0;
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if (p->parent != proc)
+        continue;
+      if ((uint)p->stack != 0) {
+        havekids = 1;
+        if (p->state == ZOMBIE) {
+          // Found one.
+          pid = p->pid;
+          *stack = p->stack;
+          kfree(p->kstack);
+          p->kstack = 0;
+          p->state = UNUSED;
+          p->pid = 0;
+          p->space_id = 0;
+          p->parent = 0;
+          p->name[0] = 0;
+          p->killed = 0;
+          release(&ptable.lock);
+          return pid;
+        }
+      }
+    }
+
+    // No point waiting if we don't have any children.
+    if (!havekids || proc->killed) {
       release(&ptable.lock);
       return -1;
     }
