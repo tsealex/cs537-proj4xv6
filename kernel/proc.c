@@ -226,10 +226,12 @@ exit(void)
       continue;
     // not the last thread
     proc->space_id = 0; // tell wait() not to clear the address space
+    // cprintf("not last thread [%d]\n", proc->space_id); // debug
     break;
   }
   // Close all open files (last thread).
-  if (proc->space_id == 0) {
+  if (proc->space_id != 0) {
+    // cprintf("close open file\n"); // debug
     for (fd = 0; fd < NOFILE; fd++) {
       if (proc->ofile[fd]) {
         fileclose(proc->ofile[fd]);
