@@ -4,6 +4,7 @@
 #include "user.h"
 #include "x86.h"
 #include "param.h"
+#include "spinlock.h"
 
 char*
 strcpy(char *s, char *t)
@@ -136,4 +137,28 @@ thread_join()
     free((void*)*tail);
   }
   return tid;
+}
+
+void
+lock_init(lock_t* lk)
+{
+  struct spinlock* splk = malloc(sizeof(struct spinlock));
+  splk->locked = 0;
+  *lk = (lock_t)splk;
+  // NOTE: unimplmented features (no splk->cpu, splk->pcs since user program has no way to know)
+  // splk->name;
+}
+
+void
+lock_acquire(lock_t* lk)
+{
+  struct spinlock* splk = (struct spinlock*)*lk;
+  while (xchg(&splk->locked, 1) != 0);
+}
+
+void
+lock_release(lock_t* lk)
+{
+  struct spinlock* splk = (struct spinlock*)*lk;
+  xchg(&splk->locked, 0);
 }
