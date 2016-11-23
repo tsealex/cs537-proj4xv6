@@ -166,12 +166,12 @@ int
 clone(void(*fcn)(void*), void *arg, void*stack)
 {
   // check whether or not stack is >= PGSIZE in size and page aligned
-  if ((uint)stack & ~0xFFF != (uint)stack || walkpgdir(proc->pgdir, stack, 0) == 0 || (uint)stack + PGSIZE > USERTOP) {
+  if (((uint)stack & ~0xFFF) != (uint)stack || existva(proc->pgdir, stack) == 0 || ((uint)stack + PGSIZE) > USERTOP) {
     panic("clone bad stack");
     return -1;
   }
 
-  int i, pid;
+  int pid;
   struct proc *np;
 
   // Allocate process.

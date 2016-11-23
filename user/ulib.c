@@ -114,13 +114,13 @@ thread_create(void(*start_routine)(void*), void *arg)
   if (ptr == NULL)
     return -1;
   // case 1: the allocated pointer is 0x26A000 (ends with 0x000)
-  if ((uint)ptr & ~0xFFF == (uint)ptr)
+  if (((uint)ptr & ~0xFFF) == (uint)ptr)
     stack = ptr;
   else
     // case 2: stack is let say 0x26A004 (not end with 0x000) => 0x26B000 (new pointer)
     stack = (void*)(((uint)ptr + PGSIZE) & ~0xFFF);
   // create a tail: [...wasted...][...stack...][*tail=ptr]
-  uint* tail = &stack[PGSIZE];
+  uint* tail = (uint*)&stack[PGSIZE];
   *tail = (uint)ptr;
   return clone(start_routine, arg, stack);
 }
@@ -132,7 +132,7 @@ thread_join()
   char* stack;
   if ((tid = join((void**)&stack)) != -1) {
     // free the stack but first we need to obtain the original ptr
-    uint* tail = &stack[PGSIZE];
+    uint* tail = (uint*)&stack[PGSIZE];
     free((void*)*tail);
   }
   return tid;

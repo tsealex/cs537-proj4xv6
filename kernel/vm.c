@@ -364,3 +364,12 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
   }
   return 0;
 }
+
+// Check if a physical address has been mapped to the virtual address va in pgdir
+int
+existva(pde_t *pgdir, const void *va)
+{ 
+  if (walkpgdir(pgdir, va, 0) == 0)
+    return 0;
+  return 1;
+}
